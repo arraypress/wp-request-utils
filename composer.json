@@ -1,0 +1,44 @@
+{
+  "name": "arraypress/wp-request-utils",
+  "version": "1.0.0",
+  "description": "A lean WordPress library for request detection and handling",
+  "type": "library",
+  "license": "GPL-2.0-or-later",
+  "homepage": "https://github.com/arraypress/request-utils/",
+  "authors": [
+    {
+      "name": "David Sherlock",
+      "homepage": "https://arraypress.com/"
+    }
+  ],
+  "require": {
+    "php": ">=7.4"
+  },
+  "autoload": {
+    "psr-4": {
+      "ArrayPress\\RequestUtils\\": "src/"
+    }
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true,
+    "preferred-install": "dist"
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "support": {
+    "issues": "https://github.com/arraypress/wp-request-utils/issues",
+    "source": "https://github.com/arraypress/wp-request-utils"
+  },
+  "keywords": [
+    "wordpress",
+    "request",
+    "ajax",
+    "mobile",
+    "admin",
+    "frontend",
+    "rest",
+    "detection",
+    "arraypress"
+  ]
+}
