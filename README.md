@@ -1,4 +1,4 @@
-# WordPress Request Utils - Lean Request Detection & Handling
+# WordPress Request Utilities
 
 A lightweight WordPress library for request type detection, device identification, and safe request variable handling. Perfect for conditional logic, security, and responsive functionality.
 
