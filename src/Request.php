@@ -4,7 +4,7 @@
  *
  * Provides utility functions for identifying and handling various types of
  * requests in a WordPress environment, including request type detection,
- * device detection, and request variable handling.
+ * header handling, and request variable management.
  *
  * @package ArrayPress\RequestUtils
  * @since   1.0.0
@@ -25,10 +25,14 @@ use WP;
  */
 class Request {
 
+	// ========================================
+	// Request Type Detection
+	// ========================================
+
 	/**
 	 * What type of request is this?
 	 *
-	 * @param string|array $type admin, ajax, cron, frontend, json, api, rest, cli, editor.
+	 * @param string|array $type admin, ajax, cron, frontend, json, rest, cli, editor.
 	 *
 	 * @return bool
 	 */
@@ -55,51 +59,6 @@ class Request {
 	 */
 	public static function is_frontend(): bool {
 		return ! self::is( [ 'admin', 'ajax', 'cron', 'rest', 'api', 'cli' ] );
-	}
-
-	/**
-	 * Returns true if the request is an admin request.
-	 *
-	 * @return bool
-	 */
-	public static function is_admin(): bool {
-		return is_admin();
-	}
-
-	/**
-	 * Returns true if the request is an AJAX request.
-	 *
-	 * @return bool
-	 */
-	public static function is_ajax(): bool {
-		return wp_doing_ajax();
-	}
-
-	/**
-	 * Returns true if the request is a cron request.
-	 *
-	 * @return bool
-	 */
-	public static function is_cron(): bool {
-		return wp_doing_cron();
-	}
-
-	/**
-	 * Returns true if the request is a REST API request.
-	 *
-	 * @return bool
-	 */
-	public static function is_rest(): bool {
-		return defined( 'REST_REQUEST' ) && REST_REQUEST;
-	}
-
-	/**
-	 * Returns true if the request is a JSON request.
-	 *
-	 * @return bool
-	 */
-	public static function is_json(): bool {
-		return wp_is_json_request();
 	}
 
 	/**
@@ -137,25 +96,35 @@ class Request {
 	}
 
 	/**
-	 * Checks if the current request is from a mobile device.
+	 * Check if the request is an API request (REST or custom).
 	 *
-	 * @return bool True if the request is from a mobile device, false otherwise.
+	 * @return bool True if API request.
 	 */
-	public static function is_mobile(): bool {
-		return wp_is_mobile();
+	public static function is_api(): bool {
+		// Check REST API
+		if ( defined( 'REST_REQUEST' ) && REST_REQUEST ) {
+			return true;
+		}
+
+		// Check for API headers
+		$api_headers = [
+			'x-api-key',
+			'authorization',
+			'x-auth-token',
+			'x-access-token'
+		];
+
+		foreach ( $api_headers as $header ) {
+			if ( self::has_header( $header ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
-	 * Checks if the current request is from a desktop device.
-	 *
-	 * @return bool True if the request is from a desktop device, false otherwise.
-	 */
-	public static function is_desktop(): bool {
-		return ! wp_is_mobile();
-	}
-
-	/**
-	 * Checks if the current connection is secure (SSL).
+	 * Checks if the current connection is secure (SSL) with CloudFlare support.
 	 *
 	 * @return bool True if the connection is secure (SSL), false otherwise.
 	 */
@@ -163,16 +132,6 @@ class Request {
 		// Check WordPress core function first
 		if ( is_ssl() ) {
 			return true;
-		}
-
-		// Check WordPress HTTPS plugin if available
-		global $wordpress_https;
-		if ( class_exists( 'WordPressHTTPS' ) && isset( $wordpress_https ) ) {
-			if ( method_exists( $wordpress_https, 'is_ssl' ) ) {
-				return $wordpress_https->is_ssl();
-			} elseif ( method_exists( $wordpress_https, 'isSsl' ) ) {
-				return $wordpress_https->isSsl();
-			}
 		}
 
 		// Check Cloudflare SSL indicator
@@ -186,9 +145,223 @@ class Request {
 		return false;
 	}
 
+	/**
+	 * Check if request is behind CloudFlare.
+	 *
+	 * @return bool True if behind CloudFlare.
+	 */
+	public static function is_cloudflare(): bool {
+		return self::has_header( 'cf-ray' ) || self::has_header( 'cf-connecting-ip' );
+	}
+
+	// ========================================
+	// HTTP Method Handling
+	// ========================================
+
+	/**
+	 * Get the request method (GET, POST, PUT, DELETE, etc.).
+	 *
+	 * @return string Request method in uppercase.
+	 */
+	public static function get_method(): string {
+		return strtoupper( $_SERVER['REQUEST_METHOD'] ?? 'GET' );
+	}
+
+	/**
+	 * Check if request method matches.
+	 *
+	 * @param string|array $method Method(s) to check.
+	 *
+	 * @return bool True if method matches.
+	 */
+	public static function is_method( $method ): bool {
+		$current = self::get_method();
+
+		if ( is_string( $method ) ) {
+			return $current === strtoupper( $method );
+		}
+
+		if ( is_array( $method ) ) {
+			return in_array( $current, array_map( 'strtoupper', $method ), true );
+		}
+
+		return false;
+	}
+
+	// ========================================
+	// Header Management
+	// ========================================
+
+	/**
+	 * Get a specific HTTP header value.
+	 *
+	 * @param string $header  The header name (case-insensitive).
+	 * @param mixed  $default Default value if header not found.
+	 *
+	 * @return mixed The header value or default.
+	 */
+	public static function get_header( string $header, $default = null ) {
+		$header = strtolower( str_replace( '-', '_', $header ) );
+
+		// Check with HTTP_ prefix in $_SERVER
+		$server_key = 'HTTP_' . strtoupper( $header );
+		if ( isset( $_SERVER[ $server_key ] ) ) {
+			return sanitize_text_field( $_SERVER[ $server_key ] );
+		}
+
+		// Check without prefix for some headers
+		$special_headers = [
+			'content_type'   => 'CONTENT_TYPE',
+			'content_length' => 'CONTENT_LENGTH',
+		];
+
+		if ( isset( $special_headers[ $header ] ) && isset( $_SERVER[ $special_headers[ $header ] ] ) ) {
+			return sanitize_text_field( $_SERVER[ $special_headers[ $header ] ] );
+		}
+
+		// Use getallheaders if available
+		if ( function_exists( 'getallheaders' ) ) {
+			$all_headers      = getallheaders();
+			$header_formatted = str_replace( '_', '-', $header );
+			foreach ( $all_headers as $key => $value ) {
+				if ( strtolower( $key ) === $header_formatted || strtolower( $key ) === $header ) {
+					return sanitize_text_field( $value );
+				}
+			}
+		}
+
+		return $default;
+	}
+
+	/**
+	 * Check if a header exists.
+	 *
+	 * @param string $header The header name (case-insensitive).
+	 *
+	 * @return bool True if header exists.
+	 */
+	public static function has_header( string $header ): bool {
+		return self::get_header( $header ) !== null;
+	}
+
+	/**
+	 * Get the real client IP address (considering proxies and CloudFlare).
+	 *
+	 * @return string Client IP address.
+	 */
+	public static function get_client_ip(): string {
+		// CloudFlare
+		if ( self::is_cloudflare() && self::has_header( 'cf-connecting-ip' ) ) {
+			return self::get_header( 'cf-connecting-ip' );
+		}
+
+		// Standard proxy headers (in order of preference)
+		$proxy_headers = [
+			'x-real-ip',
+			'x-forwarded-for',
+			'client-ip',
+			'x-client-ip',
+			'x-cluster-client-ip'
+		];
+
+		foreach ( $proxy_headers as $header ) {
+			$ip = self::get_header( $header );
+			if ( $ip ) {
+				// Handle comma-separated IPs (X-Forwarded-For)
+				if ( strpos( $ip, ',' ) !== false ) {
+					$ips = explode( ',', $ip );
+					$ip  = trim( $ips[0] );
+				}
+
+				// Validate IP
+				if ( filter_var( $ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE ) ) {
+					return $ip;
+				}
+			}
+		}
+
+		// Fallback to REMOTE_ADDR
+		return $_SERVER['REMOTE_ADDR'] ?? '';
+	}
+
 	// ========================================
 	// Request Data Methods
 	// ========================================
+
+	/**
+	 * Get a sanitized request variable.
+	 *
+	 * @param string $key     The variable key.
+	 * @param mixed  $default Default value if not found.
+	 * @param string $method  Request method ('get', 'post', 'request'). Default 'request'.
+	 *
+	 * @return mixed The sanitized value or default.
+	 */
+	public static function get_var( string $key, $default = null, string $method = 'request' ) {
+		switch ( strtolower( $method ) ) {
+			case 'get':
+				$source = $_GET;
+				break;
+			case 'post':
+				$source = $_POST;
+				break;
+			default:
+				$source = $_REQUEST;
+				break;
+		}
+
+		$sanitized_key = sanitize_key( $key );
+
+		if ( ! isset( $source[ $sanitized_key ] ) ) {
+			return $default;
+		}
+
+		$value = $source[ $sanitized_key ];
+
+		if ( is_array( $value ) ) {
+			return array_map( 'sanitize_text_field', $value );
+		}
+
+		return sanitize_text_field( $value );
+	}
+
+	/**
+	 * Check if a request variable exists.
+	 *
+	 * @param string $key    The variable key.
+	 * @param string $method Request method ('get', 'post', 'request'). Default 'request'.
+	 *
+	 * @return bool True if the variable exists.
+	 */
+	public static function has_var( string $key, string $method = 'request' ): bool {
+		switch ( strtolower( $method ) ) {
+			case 'get':
+				$source = $_GET;
+				break;
+			case 'post':
+				$source = $_POST;
+				break;
+			default:
+				$source = $_REQUEST;
+				break;
+		}
+
+		return isset( $source[ sanitize_key( $key ) ] );
+	}
+
+	/**
+	 * Get the current page number from a specified parameter.
+	 *
+	 * Retrieves and sanitizes the specified parameter from $_GET, defaulting to 1 if not set or invalid.
+	 * This is primarily used for pagination in admin tables.
+	 *
+	 * @param string $param The URL parameter name to check for page number. Default 'paged'.
+	 *
+	 * @return int The current page number, minimum value of 1.
+	 */
+	public static function get_current_page( string $param = 'paged' ): int {
+		return isset( $_GET[ $param ] ) ? max( 1, absint( $_GET[ $param ] ) ) : 1;
+	}
 
 	/**
 	 * Returns the sanitized version of the $_REQUEST superglobal array.
@@ -271,69 +444,6 @@ class Request {
 		return $cache;
 	}
 
-	/**
-	 * Get the current page number from a specified parameter.
-	 *
-	 * Retrieves and sanitizes the specified parameter from $_GET, defaulting to 1 if not set or invalid.
-	 * This is primarily used for pagination in admin tables.
-	 *
-	 * @param string $param The URL parameter name to check for page number. Default 'paged'.
-	 *
-	 * @return int The current page number, minimum value of 1.
-	 */
-	public static function get_current_page( string $param = 'paged' ): int {
-		return isset( $_GET[ $param ] ) ? max( 1, absint( $_GET[ $param ] ) ) : 1;
-	}
-
-	/**
-	 * Get a sanitized request variable.
-	 *
-	 * @param string $key     The variable key.
-	 * @param mixed  $default Default value if not found.
-	 * @param string $method  Request method ('get', 'post', 'request'). Default 'request'.
-	 *
-	 * @return mixed The sanitized value or default.
-	 */
-	public static function get_var( string $key, $default = null, string $method = 'request' ) {
-		switch ( strtolower( $method ) ) {
-			case 'get':
-				$vars = self::get_get_vars();
-				break;
-			case 'post':
-				$vars = self::get_post_vars();
-				break;
-			default:
-				$vars = self::get_request_vars();
-				break;
-		}
-
-		return $vars[ sanitize_key( $key ) ] ?? $default;
-	}
-
-	/**
-	 * Check if a request variable exists.
-	 *
-	 * @param string $key    The variable key.
-	 * @param string $method Request method ('get', 'post', 'request'). Default 'request'.
-	 *
-	 * @return bool True if the variable exists.
-	 */
-	public static function has_var( string $key, string $method = 'request' ): bool {
-		switch ( strtolower( $method ) ) {
-			case 'get':
-				$vars = self::get_get_vars();
-				break;
-			case 'post':
-				$vars = self::get_post_vars();
-				break;
-			default:
-				$vars = self::get_request_vars();
-				break;
-		}
-
-		return isset( $vars[ sanitize_key( $key ) ] );
-	}
-
 	// ========================================
 	// Private Helper Methods
 	// ========================================
@@ -350,11 +460,11 @@ class Request {
 			case 'admin':
 				return is_admin();
 			case 'ajax':
-				return self::is_ajax();
+				return wp_doing_ajax();
 			case 'cron':
-				return self::is_cron();
+				return wp_doing_cron();
 			case 'rest':
-				return self::is_rest();
+				return defined( 'REST_REQUEST' ) && REST_REQUEST;
 			case 'frontend':
 				return self::is_frontend();
 			case 'json':
@@ -363,6 +473,8 @@ class Request {
 				return self::is_editor();
 			case 'cli':
 				return self::is_cli();
+			case 'api':
+				return self::is_api();
 			default:
 				return false;
 		}
